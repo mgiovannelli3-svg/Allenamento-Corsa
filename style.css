@@ -105,3 +105,7 @@ nav button { flex: 1; max-width: 140px; background: none; border: 0; color: var(
 nav svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 nav button.on { color: var(--accent); font-weight: 700; }
 @media (max-width: 360px) { .grid2 { grid-template-columns: 1fr; } }
+.file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.file-btn { cursor: pointer; }
+textarea { width: 100%; font: inherit; font-size: .85rem; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); margin: 6px 0; resize: vertical; }
+.err { color: var(--stop); font-weight: 600; }
