@@ -124,7 +124,11 @@ export function today(todayKey, runs, fit, p, profile, state) {
     if (y && y.status !== 'done') w = { ...y, movedFrom: y.date };
   }
   const doneToday = runsOn(runs, todayKey);
-  const out = { planned: w, adjusted: w ? { ...w } : null, notes, doneToday, matched, rest: !w };
+  // la corsa di oggi può aver "coperto" un allenamento di un giorno vicino (es. quello di venerdì fatto giovedì)
+  const coveredToday = matched.find(m => m.run && localDateKey(m.run.start) === todayKey);
+  if (coveredToday && (!w || w.status !== 'done' || w.run !== coveredToday.run)) w = { ...coveredToday, movedFrom: coveredToday.date !== todayKey ? coveredToday.date : undefined };
+  const out = { planned: w, adjusted: w ? { ...w } : null, notes, doneToday, matched, rest: !w, done: !!coveredToday, next: matched.find(m => m.date > todayKey && m.status !== 'done') || null };
+  if (!out.done) {
 
   // 1. Il piede prima di tutto
   const painDays = Object.keys(state.heelPain || {}).filter(k => k > addDays(todayKey, -10) && k <= todayKey).length;
@@ -172,11 +176,13 @@ export function today(todayKey, runs, fit, p, profile, state) {
     notes.push({ level: 'info', text: `La settimana scorsa hai fatto ${Math.round(doneKm)} km su ${plannedKm} previsti: questa settimana accorcio un po' le uscite. Gli allenamenti saltati non si recuperano.` });
   }
 
+  }
+
   // 4. Le facili sono davvero facili?
   if (fit.easyTooHard) notes.push({ level: 'tip', text: `Nelle ultime 4 settimane solo il ${fit.zonePct[0]}% del tempo è stato sotto ${profile.zones.easy} battiti. Rallenta le uscite facili: è da lì che è nata la tua mezza in 1:36.` });
 
   // 5. Corsa a pranzo
-  if (out.adjusted && out.adjusted.type !== 'rest') {
+  if (out.adjusted && out.adjusted.type !== 'rest' && !out.done) {
     const lunch = runs.slice(-6).filter(r => { const h = new Date(r.start).getHours(); return h >= 12 && h <= 15; }).length >= 3;
     if (lunch) notes.push({ level: 'tip', text: 'Se corri all\'ora di pranzo il cuore sta circa 10 battiti più alto allo stesso passo: guida col cuore, non col passo.' });
   }

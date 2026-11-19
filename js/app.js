@@ -32,13 +32,26 @@ function viewOggi() {
   const daysToRace = Math.round((parseKey(db.profile.raceDate) - parseKey(t)) / DAY);
   const ph = phaseOf(t);
   let card;
-  if (!d.adjusted) {
-    const next = d.matched.find(m => m.date > t);
+  const next = d.next;
+  const nextLine = next ? `<p class="muted">Prossimo: <b>${fmtDay(next.date, true)}</b> · ${TYPES[next.type].name}, ${fmtKm(next.km)} km</p>` : '';
+  const runLine = r => `${fmtKm(r.km)} km in ${fmtTime(r.sec)}, ${fmtPace(r.sec / r.km)}/km${r.avgHr ? `, cuore medio ${r.avgHr}` : ''}`;
+  if (d.done) {
+    const a = d.adjusted, r = a.run;
+    card = `<div class="card hero done">
+      <div class="eyebrow">Oggi · fatto</div>
+      <h2>${esc(TYPES[a.type].name)} <span class="km">✓</span></h2>
+      <p>${runLine(r)}.</p>
+      ${a.movedFrom ? `<p class="muted">Era previsto per ${fmtDay(a.movedFrom, true)}: l'ho segnato come fatto, quindi quel giorno è riposo.</p>` : ''}
+      ${d.verdict ? `<p class="verdict">${esc(d.verdict)}</p>` : ''}
+      ${nextLine}
+    </div>`;
+  } else if (!d.adjusted) {
+    const extra = d.doneToday[d.doneToday.length - 1];
     card = `<div class="card hero rest">
       <div class="eyebrow">Oggi</div>
-      <h2>Riposo</h2>
-      <p>Se ti va: 20-30 minuti di forza (squat, affondi, ponte glutei, polpacci, plank) e gli esercizi per il piede.</p>
-      ${next ? `<p class="muted">Prossimo: <b>${fmtDay(next.date, true)}</b> · ${TYPES[next.type].name}, ${fmtKm(next.km)} km</p>` : ''}
+      ${extra ? `<h2>Corsa extra ✓</h2><p>${runLine(extra)}. Oggi non era in programma: va bene, ma tienila facile e non aggiungerne altre in settimana.</p>`
+      : `<h2>Riposo</h2><p>Se ti va: 20-30 minuti di forza (squat, affondi, ponte glutei, polpacci, plank) e gli esercizi per il piede.</p>`}
+      ${nextLine}
     </div>`;
   } else if (d.adjusted.type === 'rest') {
     card = `<div class="card hero stop"><div class="eyebrow">Oggi</div><h2>Stop alla corsa</h2><p>Riposo e controllo dal medico o dal fisioterapista.</p></div>`;
@@ -50,7 +63,7 @@ function viewOggi() {
       <p>${esc(describe(a, p, z))}</p>
       <p class="muted">A cosa serve: ${esc(a.why)}</p>
       ${changed ? `<p class="changed">Adattato: il piano prevedeva ${esc(TYPES[d.planned.type].name.toLowerCase())}, ${fmtKm(d.planned.km)} km.</p>` : ''}
-      ${d.verdict ? `<p class="verdict">${esc(d.verdict)}</p>` : ''}
+      ${d.verdict ? `<p class="verdict">${esc(d.verdict)}</p>` : '<p class="muted">Hai già corso? Carica la corsa dalla scheda Dati e la segno come fatta.</p>'}
     </div>`;
   }
   const notes = d.notes.map(n => `<div class="note ${n.level}">${esc(n.text)}</div>`).join('');

@@ -33,6 +33,7 @@ p { margin: 6px 0; }
 .hero { border-width: 2px; }
 .hero.easy { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--card) 70%); }
 .hero.quality { border-color: var(--q); background: linear-gradient(var(--q-soft), var(--card) 70%); }
+.hero.done { border-color: var(--accent); background: var(--accent-soft); }
 .hero.stop { border-color: var(--stop); background: var(--stop-soft); }
 .eyebrow { font-size: .75rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; }
 .km { font-weight: 500; color: var(--muted); font-size: 1.05rem; margin-left: 6px; white-space: nowrap; }
