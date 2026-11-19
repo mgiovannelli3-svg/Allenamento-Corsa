@@ -199,7 +199,8 @@ function viewDati() {
     <div class="card">
       <b>Carica le corse dal Garmin</b>
       <p class="muted">Puoi scegliere più file insieme: i .zip scaricati da Garmin Connect (anche l'export completo), i file .fit o il file Activities.csv. I doppioni vengono ignorati.</p>
-      <label class="btn primary">Scegli i file<input type="file" id="files" multiple accept=".fit,.zip,.csv,.json,application/zip,text/csv,application/json" hidden></label>
+      <label class="btn primary file-btn" for="files">Scegli i file</label>
+      <input type="file" id="files" multiple class="file-input">
       <div id="importMsg" class="muted" aria-live="polite"></div>
       <p>${db.runs.length ? `Hai <b>${db.runs.length}</b> corse salvate, dal ${fmtDay(localDateKey(first.start))} ${parseKey(localDateKey(first.start)).getFullYear()} al ${fmtDay(localDateKey(lastR.start))} ${parseKey(localDateKey(lastR.start)).getFullYear()}.` : 'Nessuna corsa salvata.'}</p>
       <details class="help"><summary>Come scarico i file dal Garmin?</summary>
@@ -207,6 +208,10 @@ function viewDati() {
         <li>Apri l'attività, tocca l'icona a ingranaggio e scegli <b>Esporta originale</b>: scarica un file .zip.</li>
         <li>Torna qui, tocca <b>Scegli i file</b> e seleziona lo zip dai Download.</li></ol>
         <p>Il file .fit dà il quadro completo (battiti secondo per secondo). Il CSV dà solo i riassunti.</p></details>
+    </div>
+    <div class="card"><b>Hai un codice dello storico?</b>
+      <p class="muted">Se ti ho mandato un link o un codice con le tue corse, incollalo qui.</p>
+      <form id="codeForm"><textarea id="code" name="code" rows="3" placeholder="Incolla qui il codice o il link"></textarea><button class="btn small">Carica lo storico</button></form>
     </div>
     ${cand && !hasTest ? `<div class="note info">Ho trovato il tuo test: 5 km in <b>${fmtTime(cand.best5k)}</b> il ${fmtDay(localDateKey(cand.start))}. <button class="btn small" id="useTest" data-sec="${cand.best5k}" data-date="${localDateKey(cand.start)}">Usalo per ricalcolare i ritmi</button></div>` : ''}
     <div class="card"><b>Test 5 km</b>
@@ -297,9 +302,10 @@ document.addEventListener('change', e => {
   }
 });
 
-document.addEventListener('submit', e => {
+document.addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
+  if (e.target.id === 'codeForm') { await importCode(String(fd.get('code') || '')); return; }
   if (e.target.id === 'testForm') {
     const sec = parseTime(fd.get('time'));
     if (sec && sec > 600 && sec < 3600) { db.profile.tests.push({ date: fd.get('date'), sec }); db.profile.tests.sort((a, b) => a.date.localeCompare(b.date)); }
@@ -311,6 +317,33 @@ document.addEventListener('submit', e => {
   }
   save(db); render();
 });
+
+// Storico passato come codice (compresso e in base64) nel link: #storico=...
+// Il pezzo dopo # non viene mai inviato al server: i dati restano tra il link e il telefono.
+async function decodeCode(text) {
+  const m = text.trim().match(/storico=([A-Za-z0-9_-]+)/) || text.trim().match(/^([A-Za-z0-9_-]{20,})$/);
+  if (!m) throw new Error('Il codice non sembra giusto: copialo tutto, dall\'inizio alla fine.');
+  const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+  const bin = Uint8Array.from(atob(b64 + '='.repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0));
+  const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return JSON.parse(await new Response(stream).text());
+}
+async function importCode(text) {
+  let msg;
+  try {
+    const data = await decodeCode(text);
+    if (!Array.isArray(data.runs)) throw new Error('Il codice non contiene corse.');
+    const { added } = mergeRuns(db, data.runs); save(db);
+    msg = `<span class="ok">Storico caricato: ${added} corse nuove, ${db.runs.length} in totale.</span>`;
+  } catch (e) { msg = `<span class="err">${esc(e.message || 'Codice non valido')}</span>`; }
+  tab = 'dati'; render();
+  const m = $('#importMsg'); if (m) m.innerHTML = msg;
+}
+if (location.hash.startsWith('#storico=')) {
+  const h = location.hash;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
+  importCode(h);
+}
 
 render();
 // Se non ci sono dati e accanto all'app c'è un file "dati-iniziali.json" (copia di sicurezza), lo carico.
