@@ -81,7 +81,8 @@ export function feedback(t, db, todayKey) {
   } else if (nextTxt) {
     parts.push(`Il piano non cambia: prossimo allenamento ${nextTxt}.`);
   }
-  return { reply: parts.join(' '), changed: true };
+  const askHeel = run && !f.pain && !/(tallon|piede|plantare)/.test(t);
+  return { reply: parts.join(' '), changed: true, ask: askHeel ? 'heelRun' : null, askText: 'Ultima cosa: hai sentito il tallone durante o dopo la corsa?' };
 }
 
 // Effetto delle impressioni sull'allenamento del giorno: chiamata da today() in plan.js

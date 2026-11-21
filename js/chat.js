@@ -4,6 +4,7 @@ import { TYPES } from './plan.js';
 import { activePlan, slotsFromDays, DAY_NAMES } from './schedule.js';
 import { addDays, parseKey, mondayOf } from './analysis.js';
 import { looksLikeFeedback, feedback } from './feedback.js';
+import { topic, followUp } from './coach.js';
 
 const DAY_WORDS = [
   [/\b(domenica|dom)\b/, 0], [/\b(lunedi|lun)\b/, 1], [/\b(martedi)\b/, 2], [/\b(mercoledi|mer)\b/, 3],
@@ -35,9 +36,25 @@ const HELP = `Posso cambiare il piano così:
 • "Salta oggi" (se non riesci a correre)
 • Raccontami com'è andata: "vento contro e tanta salita, gambe pesanti"
 • "Com'è la mia settimana?"
-• "Torna al piano originale"`;
+• "Torna al piano originale"
+E puoi chiedermi:
+• "Come sto?" (stato di forma) e "Cosa fai per farmi migliorare?"
+• "Che tempo farei in una mezza?" oppure "sui 10 km?"
+• "A che ritmo devo correre?" e "Cosa devo fare oggi?"
+• "HRV 48", "peso 74,5", "52 a riposo": li segno e li confronto
+• Piede, sonno, alimentazione, scarpe, stretching`;
 
 export function answer(text, db, todayKey) {
+  const st = db.state;
+  const ask = st.pending; delete st.pending;
+  const res = reply(text, db, todayKey, ask);
+  if (res.ask) { st.pending = res.ask; if (res.askText) res.reply += ' ' + res.askText; }
+  return res;
+}
+
+const QUESTION = /\?|^(come|quanto|quanti|quale|qual|cosa|che|perche|dimmi|spiega|mi (dici|spieghi)|vorrei sapere|sai|devo|quando|a che)\b/;
+
+function reply(text, db, todayKey, ask) {
   const t = norm(text).trim();
   const st = db.state;
   st.moves = st.moves || {};
@@ -53,8 +70,21 @@ export function answer(text, db, todayKey) {
     return { reply: 'Fatto: sono tornato al piano originale (martedì e giovedì, facoltativo il sabato, lungo la domenica).', changed: true };
   }
 
+  // Risposta a una domanda del coach ("sì", "no", un numero)
+  if (ask) {
+    const f = followUp(ask, t, db, todayKey);
+    if (f) return f;
+    if (ask === 'feedback' && !/(spost|salt|settimana|posso correre|lungo lo|come sto|forma)/.test(t)) return feedback(t, db, todayKey);
+  }
+
+  // Domande su forma, previsioni, ritmi, peso, HRV...
+  const planWords = /(spost|salt|posso correre|voglio correre|lungo lo|settimana|originale)/.test(t);
+  if (!planWords && (QUESTION.test(t) || /\d/.test(t) && /(hrv|peso|kg|riposo)/.test(t))) { const r = topic(t, db, todayKey); if (r) return r; }
+
   // Impressioni dopo la corsa
   if (looksLikeFeedback(t) && !/(posso correre|voglio correre|corro (il|la|lun|mar|mer|gio|ven|sab|dom))/.test(t)) return feedback(t, db, todayKey);
+
+  if (!planWords) { const r = topic(t, db, todayKey); if (r) return r; }
 
   // Com'è la settimana
   if (/(settimana|quali giorni|che giorni|programma|cosa (devo|ho)|prossim)/.test(t) && !/(spost|salt|posso|voglio|preferisc)/.test(t)) {
@@ -133,8 +163,9 @@ export function answer(text, db, todayKey) {
     return { reply, changed: true };
   }
 
+  if (t.length < 20 && /^(ok|grazie|va bene|perfetto|no|si|bene|d accordo)\b/.test(t)) return { reply: 'Bene! Quando vuoi chiedimi come stai di forma o cosa fare oggi.' };
   if (/(ciao|aiuto|help|cosa (sai|puoi)|come funziona)/.test(t)) return { reply: HELP };
-  return { reply: 'Non ho capito. ' + HELP };
+  return { reply: 'Non ho capito bene. Puoi chiedermi per esempio: come sto di forma, che tempo farei in una mezza, cosa devo fare oggi, sposta domani a giovedì. Scrivi "aiuto" per l\'elenco completo.' };
 }
 
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
