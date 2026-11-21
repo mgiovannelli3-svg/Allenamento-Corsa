@@ -1,5 +1,6 @@
 // Il piano verso la Mezza di Napoli (21 febbraio 2027) e le regole che lo adattano ogni giorno.
 import { fmtPace, addDays, localDateKey, runsBetween, mondayOf } from './analysis.js';
+import { feedbackEffect } from './feedback.js';
 
 // Tipi di allenamento. La descrizione usa i ritmi calcolati dallo stato di forma attuale.
 const pr = ([a, b]) => `${fmtPace(a)}-${fmtPace(b)}/km`;
@@ -101,30 +102,37 @@ export const runsOn = (runs, key) => runs.filter(r => localDateKey(r.start) === 
 
 // Abbina le corse fatte agli allenamenti del piano (stesso giorno o, per i facoltativi e i
 // giorni "alternativi", il giorno prima/dopo).
-export function matchPlan(runs, todayKey) {
+export function matchPlan(runs, todayKey, plan = PLAN) {
   const used = new Set();
-  return PLAN.map(w => {
+  const live = plan.filter(o => !o.skipped);
+  return plan.map(w => {
     let run = runsOn(runs, w.date).find(r => !used.has(r.id));
-    if (!run) for (const d of [-1, 1]) { run = runsOn(runs, addDays(w.date, d)).find(r => !used.has(r.id) && !PLAN.some(o => o.date === localDateKey(r.start))); if (run) break; }
+    if (!run) for (const d of [-1, 1]) { run = runsOn(runs, addDays(w.date, d)).find(r => !used.has(r.id) && !live.some(o => o.date === localDateKey(r.start))); if (run) break; }
     if (run) used.add(run.id);
-    const status = run ? 'done' : w.date < addDays(todayKey, -1) ? (w.optional ? 'skipped' : 'missed') : w.date <= todayKey ? 'today' : 'future';
+    const status = run ? 'done' : w.skipped ? 'skipped' : w.date < addDays(todayKey, -1) ? (w.optional ? 'skipped' : 'missed') : w.date <= todayKey ? 'today' : 'future';
     return { ...w, run, status };
   });
 }
 
 // Il cuore dell'app: l'allenamento di oggi, adattato a come stai.
 // state: { heelPain: {date: true}, tired: {date: true} }
-export function today(todayKey, runs, fit, p, profile, state) {
-  const matched = matchPlan(runs, todayKey);
+export function today(todayKey, runs, fit, p, profile, state, plan = PLAN) {
+  const matched = matchPlan(runs, todayKey, plan);
   const notes = [];
-  let w = matched.find(m => m.date === todayKey) || null;
+  let w = matched.find(m => m.date === todayKey && !m.skipped) || null;
+  const skippedToday = matched.find(m => m.date === todayKey && m.skipped && m.status !== 'done');
+  if (skippedToday) notes.push({ level: 'info', text: `Oggi era previsto: ${TYPES[skippedToday.type].name.toLowerCase()}, ${skippedToday.km} km. L'hai tolto tu dalla chat: non va recuperato.` });
   // un allenamento con due date possibili (es. "gio 19 o ven 20") vale anche oggi, se non è già fatto
   if (!w) {
     const y = matched.find(m => m.altDate === todayKey);
     if (y && y.status !== 'done') w = { ...y, movedFrom: y.date };
   }
   const doneToday = runsOn(runs, todayKey);
-  const out = { planned: w, adjusted: w ? { ...w } : null, notes, doneToday, matched, rest: !w };
+  // la corsa di oggi può aver "coperto" un allenamento di un giorno vicino (es. quello di venerdì fatto giovedì)
+  const coveredToday = matched.find(m => m.run && localDateKey(m.run.start) === todayKey);
+  if (coveredToday && (!w || w.status !== 'done' || w.run !== coveredToday.run)) w = { ...coveredToday, movedFrom: coveredToday.date !== todayKey ? coveredToday.date : undefined };
+  const out = { planned: w, adjusted: w ? { ...w } : null, notes, doneToday, matched, rest: !w, done: !!coveredToday, next: matched.find(m => m.date > todayKey && m.status !== 'done' && !m.skipped) || null };
+  if (!out.done) {
 
   // 1. Il piede prima di tutto
   const painDays = Object.keys(state.heelPain || {}).filter(k => k > addDays(todayKey, -10) && k <= todayKey).length;
@@ -139,6 +147,18 @@ export function today(todayKey, runs, fit, p, profile, state) {
   } else if (painDays >= 2 && out.adjusted && TYPES[w.type].quality) {
     notes.push({ level: 'warn', text: `Il tallone ti ha dato fastidio ${painDays} volte negli ultimi 10 giorni: oggi tengo la seduta ma senza la parte veloce.` });
     Object.assign(out.adjusted, { type: TYPES[w.type].long ? 'long' : 'easy' });
+  }
+
+  // 1b. Quello che mi hai raccontato dopo le ultime corse
+  const fe = feedbackEffect(state, todayKey);
+  if (fe && out.adjusted && out.adjusted.type !== 'rest' && !state.heelPain?.[todayKey]) {
+    if (fe.kind === 'pain') {
+      Object.assign(out.adjusted, { type: 'veryeasy', km: Math.min(out.adjusted.km, 5) });
+      notes.push({ level: 'warn', text: 'Dopo l\'ultima corsa mi hai detto di aver sentito dolore: oggi solo corsa corta e molto facile, niente allunghi o salite. Se il dolore c\'è anche camminando, riposa.' });
+    } else if (out.adjusted.type !== 'race' && out.adjusted.type !== 'test') {
+      out.adjusted.km = Math.max(4, Math.round(out.adjusted.km * 0.85));
+      notes.push({ level: 'info', text: 'Dopo l\'ultima corsa eri stanco: accorcio un po\' l\'uscita di oggi. Se ti senti ancora scarico, segna "Molto stanco" qui sotto e la trasformo in corsa facile.' });
+    }
   }
 
   // 2. Stanchezza e carico
@@ -161,7 +181,7 @@ export function today(todayKey, runs, fit, p, profile, state) {
 
   // 3. La settimana scorsa: se ne hai fatta meno di metà, non correre avanti
   const lastMon = addDays(mondayOf(todayKey), -7), lastSun = addDays(lastMon, 6);
-  const lastWeek = matched.filter(m => m.date >= lastMon && m.date <= lastSun && !m.optional);
+  const lastWeek = matched.filter(m => m.date >= lastMon && m.date <= lastSun && !m.optional && !m.skipped);
   const plannedKm = lastWeek.reduce((s, m) => s + m.km, 0);
   const doneKm = runsBetween(runs, lastMon, lastSun).reduce((s, r) => s + r.km, 0);
   const lastRunKey = runs.length ? localDateKey(runs[runs.length - 1].start) : null;
@@ -172,11 +192,13 @@ export function today(todayKey, runs, fit, p, profile, state) {
     notes.push({ level: 'info', text: `La settimana scorsa hai fatto ${Math.round(doneKm)} km su ${plannedKm} previsti: questa settimana accorcio un po' le uscite. Gli allenamenti saltati non si recuperano.` });
   }
 
+  }
+
   // 4. Le facili sono davvero facili?
   if (fit.easyTooHard) notes.push({ level: 'tip', text: `Nelle ultime 4 settimane solo il ${fit.zonePct[0]}% del tempo è stato sotto ${profile.zones.easy} battiti. Rallenta le uscite facili: è da lì che è nata la tua mezza in 1:36.` });
 
   // 5. Corsa a pranzo
-  if (out.adjusted && out.adjusted.type !== 'rest') {
+  if (out.adjusted && out.adjusted.type !== 'rest' && !out.done) {
     const lunch = runs.slice(-6).filter(r => { const h = new Date(r.start).getHours(); return h >= 12 && h <= 15; }).length >= 3;
     if (lunch) notes.push({ level: 'tip', text: 'Se corri all\'ora di pranzo il cuore sta circa 10 battiti più alto allo stesso passo: guida col cuore, non col passo.' });
   }
@@ -194,8 +216,8 @@ export function today(todayKey, runs, fit, p, profile, state) {
 export function weekSummary(matched, mondayKey, runs) {
   const sun = addDays(mondayKey, 6);
   const items = matched.filter(m => m.date >= mondayKey && m.date <= sun);
-  const planned = items.filter(m => !m.optional).reduce((s, m) => s + m.km, 0);
-  const plannedMax = items.reduce((s, m) => s + m.km, 0);
+  const planned = items.filter(m => !m.optional && !m.skipped).reduce((s, m) => s + m.km, 0);
+  const plannedMax = items.filter(m => !m.skipped).reduce((s, m) => s + m.km, 0);
   const done = runsBetween(runs, mondayKey, sun).reduce((s, r) => s + r.km, 0);
   return { items, planned, plannedMax, done: Math.round(done * 10) / 10, phase: phaseOf(mondayKey) || phaseOf(sun) };
 }

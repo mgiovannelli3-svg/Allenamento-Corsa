@@ -3,7 +3,9 @@ import { fitToRun } from './fit.js';
 import { unzipFits } from './zip.js';
 import { parseActivitiesCsv } from './csv.js';
 import { fitness, paces, weeklyKm, fmtPace, fmtTime, localDateKey, addDays, mondayOf, parseKey, bestTestCandidate, DAY } from './analysis.js';
-import { TYPES, describe, today, matchPlan, weekSummary, PLAN, phaseOf } from './plan.js';
+import { TYPES, describe, today, matchPlan, weekSummary, phaseOf } from './plan.js';
+import { activePlan } from './schedule.js';
+import { answer } from './chat.js';
 
 let db = load();
 let tab = 'oggi';
@@ -21,24 +23,39 @@ function model() {
   const t = todayKey();
   const fit = fitness(db.runs, db.profile, t);
   const p = paces(fit.halfSec, db.profile);
-  return { t, fit, p };
+  const plan = activePlan(db.state, t);
+  return { t, fit, p, plan };
 }
 
 // ---------- OGGI ----------
 function viewOggi() {
-  const { t, fit, p } = model();
+  const { t, fit, p, plan } = model();
   const z = db.profile.zones;
-  const d = today(t, db.runs, fit, p, db.profile, db.state);
+  const d = today(t, db.runs, fit, p, db.profile, db.state, plan);
   const daysToRace = Math.round((parseKey(db.profile.raceDate) - parseKey(t)) / DAY);
   const ph = phaseOf(t);
   let card;
-  if (!d.adjusted) {
-    const next = d.matched.find(m => m.date > t);
+  const next = d.next;
+  const nextLine = next ? `<p class="muted">Prossimo: <b>${fmtDay(next.date, true)}</b> · ${TYPES[next.type].name}, ${fmtKm(next.km)} km</p>` : '';
+  const runLine = r => `${fmtKm(r.km)} km in ${fmtTime(r.sec)}, ${fmtPace(r.sec / r.km)}/km${r.avgHr ? `, cuore medio ${r.avgHr}` : ''}`;
+  if (d.done) {
+    const a = d.adjusted, r = a.run;
+    card = `<div class="card hero done">
+      <div class="eyebrow">Oggi · fatto</div>
+      <h2>${esc(TYPES[a.type].name)} <span class="km">✓</span></h2>
+      <p>${runLine(r)}.</p>
+      ${a.movedFrom ? `<p class="muted">Era previsto per ${fmtDay(a.movedFrom, true)}: l'ho segnato come fatto, quindi quel giorno è riposo.</p>` : ''}
+      ${d.verdict ? `<p class="verdict">${esc(d.verdict)}</p>` : ''}
+      ${nextLine}
+      <button class="btn primary small" id="tellRun">🎤 Racconta com'è andata</button>
+    </div>`;
+  } else if (!d.adjusted) {
+    const extra = d.doneToday[d.doneToday.length - 1];
     card = `<div class="card hero rest">
       <div class="eyebrow">Oggi</div>
-      <h2>Riposo</h2>
-      <p>Se ti va: 20-30 minuti di forza (squat, affondi, ponte glutei, polpacci, plank) e gli esercizi per il piede.</p>
-      ${next ? `<p class="muted">Prossimo: <b>${fmtDay(next.date, true)}</b> · ${TYPES[next.type].name}, ${fmtKm(next.km)} km</p>` : ''}
+      ${extra ? `<h2>Corsa extra ✓</h2><p>${runLine(extra)}. Oggi non era in programma: va bene, ma tienila facile e non aggiungerne altre in settimana.</p><button class="btn primary small" id="tellRun">🎤 Racconta com'è andata</button>`
+      : `<h2>Riposo</h2><p>Se ti va: 20-30 minuti di forza (squat, affondi, ponte glutei, polpacci, plank) e gli esercizi per il piede.</p>`}
+      ${nextLine}
     </div>`;
   } else if (d.adjusted.type === 'rest') {
     card = `<div class="card hero stop"><div class="eyebrow">Oggi</div><h2>Stop alla corsa</h2><p>Riposo e controllo dal medico o dal fisioterapista.</p></div>`;
@@ -50,7 +67,7 @@ function viewOggi() {
       <p>${esc(describe(a, p, z))}</p>
       <p class="muted">A cosa serve: ${esc(a.why)}</p>
       ${changed ? `<p class="changed">Adattato: il piano prevedeva ${esc(TYPES[d.planned.type].name.toLowerCase())}, ${fmtKm(d.planned.km)} km.</p>` : ''}
-      ${d.verdict ? `<p class="verdict">${esc(d.verdict)}</p>` : ''}
+      ${d.verdict ? `<p class="verdict">${esc(d.verdict)}</p>` : '<p class="muted">Hai già corso? Carica la corsa dalla scheda Dati e la segno come fatta.</p>'}
     </div>`;
   }
   const notes = d.notes.map(n => `<div class="note ${n.level}">${esc(n.text)}</div>`).join('');
@@ -82,7 +99,7 @@ function viewOggi() {
 
 // ---------- FORMA ----------
 function viewForma() {
-  const { t, fit, p } = model();
+  const { t, fit, p, plan } = model();
   const z = db.profile.zones;
   if (!db.runs.length) return `<section><h1>Stato di forma</h1><div class="note info">Carica le corse dalla scheda <b>Dati</b> per vedere il tuo stato di forma.</div></section>`;
   const weeks = weeklyKm(db.runs, t, 10);
@@ -166,11 +183,11 @@ function barChart(weeks) {
 
 // ---------- PIANO ----------
 function viewPiano() {
-  const { t, fit, p } = model();
-  const matched = matchPlan(db.runs, t);
-  const mondays = [...new Set(PLAN.map(w => mondayOf(w.date)))];
+  const { t, fit, p, plan } = model();
+  const matched = matchPlan(db.runs, t, plan);
+  const mondays = [...new Set(plan.map(w => mondayOf(w.date)))];
   let html = `<section><h1>Piano verso Napoli</h1>
-    <p class="muted">Martedì e giovedì le uscite in settimana, lungo la domenica, sabato facoltativo. Se salti un allenamento non recuperarlo: riparti dal successivo. Tocca un allenamento per i dettagli.</p>`;
+    <p class="muted">${db.state.schedules?.length || Object.keys(db.state.moves || {}).length ? 'Il piano segue le modifiche che hai chiesto al Coach.' : 'Martedì e giovedì le uscite in settimana, lungo la domenica, sabato facoltativo.'} Per cambiare giorni scrivi al <b>Coach</b>. Se salti un allenamento non recuperarlo: riparti dal successivo. Tocca un allenamento per i dettagli.</p>`;
   let lastPhase = '';
   for (const mon of mondays) {
     const wk = weekSummary(matched, mon, db.runs);
@@ -269,8 +286,78 @@ function parseTime(s) {
   return parts.reduce((a, b) => a * 60 + b, 0);
 }
 
+// ---------- COACH (chat e voce) ----------
+const SUGGEST = ['Com\'è andata: vento contro e un po\' di salita, gambe pesanti', 'Com\'è la mia settimana?', 'Posso correre lunedì, mercoledì, venerdì e domenica', 'Il lungo lo faccio il sabato', 'Sposta domani a giovedì', 'Salta oggi', 'Torna al piano originale'];
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let listening = null;
+function viewCoach() {
+  const chat = db.state.chat || [];
+  const voice = db.state.voice !== false;
+  const msgs = chat.length ? chat : [{ from: 'coach', text: 'Ciao Marco! Appena finisci di correre tocca il microfono e raccontami com\'è andata: vento, salite, asfalto o sterrato, come ti sentivi. Ti dico com\'è andata e se cambio i prossimi allenamenti. Puoi anche chiedermi di cambiare i giorni del piano.' }];
+  return `<section class="coach"><div class="row between"><h1>Coach</h1><button class="btn small ghost" id="voiceToggle" aria-pressed="${voice}">${voice ? 'Voce: sì' : 'Voce: no'}</button></div>
+    <div class="msgs" id="msgs">${msgs.map((m, i) => `<div class="msg ${m.from}">${esc(m.text).replace(/\n/g, '<br>')}${m.from === 'coach' ? `<button class="listen" data-listen="${i}" aria-label="Ascolta">🔊</button>` : ''}</div>`).join('')}</div>
+    <div class="chips">${SUGGEST.map(s => `<button class="chip" data-say="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+    <form id="chatForm" class="chatbar"><button type="button" class="mic" id="mic" aria-label="Parla">🎤</button><input id="chatInput" name="q" autocomplete="off" placeholder="Scrivi o tocca il microfono…" aria-label="Messaggio per il coach"><button class="btn primary small" aria-label="Invia">Invia</button></form>
+    <p class="muted" id="micHint"></p>
+    ${chat.length ? '<button class="btn small ghost" id="clearChat">Cancella la conversazione</button>' : ''}
+  </section>`;
+}
+function say(text) {
+  if (listening) { listening.onend = null; try { listening.stop(); } catch {} listening = null; }
+  text = String(text || '').trim();
+  if (!text) return;
+  const res = answer(text, db, todayKey());
+  const chat = db.state.chat = (db.state.chat || []);
+  chat.push({ from: 'me', text }, { from: 'coach', text: res.reply });
+  db.state.chat = chat.slice(-40);
+  save(db); render();
+  const box = $('#msgs'); if (box) box.lastElementChild?.scrollIntoView({ block: 'end' });
+  if (db.state.voice !== false) speak(res.reply);
+}
+// Lettura ad alta voce con la voce italiana del telefono
+function speak(text) {
+  try {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.replace(/•/g, '').replace(/\n+/g, '. '));
+    u.lang = 'it-IT';
+    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith('it'));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch {}
+}
+// Dettatura: usa il riconoscimento vocale del telefono se c'è, altrimenti il microfono della tastiera
+function startMic() {
+  const input = $('#chatInput'), hint = $('#micHint'), mic = $('#mic');
+  if (!input) return;
+  if (!SR) {
+    input.focus();
+    if (hint) hint.textContent = 'Tocca il microfono sulla tastiera del telefono e parla. Poi premi Invia.';
+    return;
+  }
+  if (listening) { listening.stop(); return; }
+  try {
+    const rec = new SR();
+    rec.lang = 'it-IT'; rec.interimResults = true; rec.continuous = true;
+    let finalText = '';
+    rec.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+        else interim += e.results[i][0].transcript;
+      }
+      input.value = (finalText + interim).trim();
+    };
+    rec.onerror = ev => { if (hint) hint.textContent = ev.error === 'not-allowed' ? 'Il telefono non ha dato il permesso al microfono. Usa il microfono della tastiera.' : 'Non ti ho sentito bene. Riprova o usa il microfono della tastiera.'; };
+    rec.onend = () => { listening = null; mic?.classList.remove('on'); if (hint) hint.textContent = ''; if (input.value.trim()) say(input.value); };
+    rec.start();
+    listening = rec; mic?.classList.add('on');
+    if (hint) hint.textContent = 'Ti ascolto… tocca di nuovo il microfono quando hai finito.';
+  } catch { input.focus(); if (hint) hint.textContent = 'Tocca il microfono sulla tastiera del telefono e parla.'; }
+}
+
 // ---------- RENDER ----------
-const VIEWS = { oggi: viewOggi, forma: viewForma, piano: viewPiano, dati: viewDati };
+const VIEWS = { oggi: viewOggi, forma: viewForma, piano: viewPiano, coach: viewCoach, dati: viewDati };
 function render() {
   $('#main').innerHTML = VIEWS[tab]();
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -280,6 +367,12 @@ function render() {
 document.addEventListener('click', e => {
   const nb = e.target.closest('nav button');
   if (nb) { tab = nb.dataset.tab; try { sessionStorage.setItem('tab', tab); } catch {} render(); window.scrollTo(0, 0); return; }
+  const chip = e.target.closest('[data-say]'); if (chip) { say(chip.dataset.say); return; }
+  if (e.target.closest('#mic')) { startMic(); return; }
+  const li = e.target.closest('[data-listen]'); if (li) { const m = (db.state.chat || [])[+li.dataset.listen]; speak(m ? m.text : $('.msg.coach')?.textContent || ''); return; }
+  if (e.target.id === 'voiceToggle') { db.state.voice = db.state.voice === false; save(db); render(); return; }
+  if (e.target.id === 'tellRun') { tab = 'coach'; render(); setTimeout(startMic, 50); return; }
+  if (e.target.id === 'clearChat') { db.state.chat = []; save(db); render(); return; }
   if (e.target.id === 'export') {
     const blob = new Blob([JSON.stringify(db)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `allenamento-corsa-${todayKey()}.json`; a.click();
@@ -306,6 +399,7 @@ document.addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
   if (e.target.id === 'codeForm') { await importCode(String(fd.get('code') || '')); return; }
+  if (e.target.id === 'chatForm') { say(fd.get('q')); return; }
   if (e.target.id === 'testForm') {
     const sec = parseTime(fd.get('time'));
     if (sec && sec > 600 && sec < 3600) { db.profile.tests.push({ date: fd.get('date'), sec }); db.profile.tests.sort((a, b) => a.date.localeCompare(b.date)); }
