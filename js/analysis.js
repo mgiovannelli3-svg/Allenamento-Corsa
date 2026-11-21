@@ -39,6 +39,8 @@ export function runsBetween(runs, fromKey, toKey) {
 
 // Efficienza: passo (sec/km) a 136-144 battiti. Più basso = più in forma.
 export function effAround(runs, key, daysBack = 30) {
+  // le corse con vento, salita o sterrato (dette dopo la corsa) non contano: i ritmi sono falsati
+  runs = runs.filter(r => !(r.cond && (r.cond.wind || r.cond.hill || r.cond.trail)));
   const vals = runsBetween(runs, addDays(key, -daysBack), key).map(r => r.eff).filter(Boolean);
   if (vals.length >= 2) return median(vals);
   // se nell'ultimo mese mancano uscite facili, uso le ultime 5 disponibili

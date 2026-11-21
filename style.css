@@ -119,3 +119,9 @@ textarea { width: 100%; font: inherit; font-size: .85rem; padding: 8px 10px; bor
 .chatbar { display: flex; gap: 8px; position: sticky; bottom: calc(64px + env(safe-area-inset-bottom)); background: var(--bg); padding: 8px 0; }
 .chatbar input { flex: 1; }
 .chatbar .btn { margin: 0; }
+.mic { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--accent); background: var(--card); font-size: 1.2rem; cursor: pointer; }
+.mic.on { background: var(--stop-soft); border-color: var(--stop); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { transform: scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .mic.on { animation: none; } }
+.listen { border: 0; background: none; font-size: .9rem; margin-left: 6px; cursor: pointer; padding: 0 2px; vertical-align: middle; }
+.msg.me .listen { display: none; }

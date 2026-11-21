@@ -3,6 +3,7 @@
 import { TYPES } from './plan.js';
 import { activePlan, slotsFromDays, DAY_NAMES } from './schedule.js';
 import { addDays, parseKey, mondayOf } from './analysis.js';
+import { looksLikeFeedback, feedback } from './feedback.js';
 
 const DAY_WORDS = [
   [/\b(domenica|dom)\b/, 0], [/\b(lunedi|lun)\b/, 1], [/\b(martedi)\b/, 2], [/\b(mercoledi|mer)\b/, 3],
@@ -32,6 +33,7 @@ const HELP = `Posso cambiare il piano così:
 • "Il lungo lo faccio il sabato"
 • "Sposta domani a giovedì" oppure "sposta il lungo a sabato"
 • "Salta oggi" (se non riesci a correre)
+• Raccontami com'è andata: "vento contro e tanta salita, gambe pesanti"
 • "Com'è la mia settimana?"
 • "Torna al piano originale"`;
 
@@ -50,6 +52,9 @@ export function answer(text, db, todayKey) {
     delete st.schedules; st.moves = {};
     return { reply: 'Fatto: sono tornato al piano originale (martedì e giovedì, facoltativo il sabato, lungo la domenica).', changed: true };
   }
+
+  // Impressioni dopo la corsa
+  if (looksLikeFeedback(t) && !/(posso correre|voglio correre|corro (il|la|lun|mar|mer|gio|ven|sab|dom))/.test(t)) return feedback(t, db, todayKey);
 
   // Com'è la settimana
   if (/(settimana|quali giorni|che giorni|programma|cosa (devo|ho)|prossim)/.test(t) && !/(spost|salt|posso|voglio|preferisc)/.test(t)) {

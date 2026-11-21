@@ -1,5 +1,6 @@
 // Il piano verso la Mezza di Napoli (21 febbraio 2027) e le regole che lo adattano ogni giorno.
 import { fmtPace, addDays, localDateKey, runsBetween, mondayOf } from './analysis.js';
+import { feedbackEffect } from './feedback.js';
 
 // Tipi di allenamento. La descrizione usa i ritmi calcolati dallo stato di forma attuale.
 const pr = ([a, b]) => `${fmtPace(a)}-${fmtPace(b)}/km`;
@@ -146,6 +147,18 @@ export function today(todayKey, runs, fit, p, profile, state, plan = PLAN) {
   } else if (painDays >= 2 && out.adjusted && TYPES[w.type].quality) {
     notes.push({ level: 'warn', text: `Il tallone ti ha dato fastidio ${painDays} volte negli ultimi 10 giorni: oggi tengo la seduta ma senza la parte veloce.` });
     Object.assign(out.adjusted, { type: TYPES[w.type].long ? 'long' : 'easy' });
+  }
+
+  // 1b. Quello che mi hai raccontato dopo le ultime corse
+  const fe = feedbackEffect(state, todayKey);
+  if (fe && out.adjusted && out.adjusted.type !== 'rest' && !state.heelPain?.[todayKey]) {
+    if (fe.kind === 'pain') {
+      Object.assign(out.adjusted, { type: 'veryeasy', km: Math.min(out.adjusted.km, 5) });
+      notes.push({ level: 'warn', text: 'Dopo l\'ultima corsa mi hai detto di aver sentito dolore: oggi solo corsa corta e molto facile, niente allunghi o salite. Se il dolore c\'è anche camminando, riposa.' });
+    } else if (out.adjusted.type !== 'race' && out.adjusted.type !== 'test') {
+      out.adjusted.km = Math.max(4, Math.round(out.adjusted.km * 0.85));
+      notes.push({ level: 'info', text: 'Dopo l\'ultima corsa eri stanco: accorcio un po\' l\'uscita di oggi. Se ti senti ancora scarico, segna "Molto stanco" qui sotto e la trasformo in corsa facile.' });
+    }
   }
 
   // 2. Stanchezza e carico
