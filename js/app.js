@@ -3,7 +3,9 @@ import { fitToRun } from './fit.js';
 import { unzipFits } from './zip.js';
 import { parseActivitiesCsv } from './csv.js';
 import { fitness, paces, weeklyKm, fmtPace, fmtTime, localDateKey, addDays, mondayOf, parseKey, bestTestCandidate, DAY } from './analysis.js';
-import { TYPES, describe, today, matchPlan, weekSummary, PLAN, phaseOf } from './plan.js';
+import { TYPES, describe, today, matchPlan, weekSummary, phaseOf } from './plan.js';
+import { activePlan } from './schedule.js';
+import { answer } from './chat.js';
 
 let db = load();
 let tab = 'oggi';
@@ -21,14 +23,15 @@ function model() {
   const t = todayKey();
   const fit = fitness(db.runs, db.profile, t);
   const p = paces(fit.halfSec, db.profile);
-  return { t, fit, p };
+  const plan = activePlan(db.state, t);
+  return { t, fit, p, plan };
 }
 
 // ---------- OGGI ----------
 function viewOggi() {
-  const { t, fit, p } = model();
+  const { t, fit, p, plan } = model();
   const z = db.profile.zones;
-  const d = today(t, db.runs, fit, p, db.profile, db.state);
+  const d = today(t, db.runs, fit, p, db.profile, db.state, plan);
   const daysToRace = Math.round((parseKey(db.profile.raceDate) - parseKey(t)) / DAY);
   const ph = phaseOf(t);
   let card;
@@ -95,7 +98,7 @@ function viewOggi() {
 
 // ---------- FORMA ----------
 function viewForma() {
-  const { t, fit, p } = model();
+  const { t, fit, p, plan } = model();
   const z = db.profile.zones;
   if (!db.runs.length) return `<section><h1>Stato di forma</h1><div class="note info">Carica le corse dalla scheda <b>Dati</b> per vedere il tuo stato di forma.</div></section>`;
   const weeks = weeklyKm(db.runs, t, 10);
@@ -179,11 +182,11 @@ function barChart(weeks) {
 
 // ---------- PIANO ----------
 function viewPiano() {
-  const { t, fit, p } = model();
-  const matched = matchPlan(db.runs, t);
-  const mondays = [...new Set(PLAN.map(w => mondayOf(w.date)))];
+  const { t, fit, p, plan } = model();
+  const matched = matchPlan(db.runs, t, plan);
+  const mondays = [...new Set(plan.map(w => mondayOf(w.date)))];
   let html = `<section><h1>Piano verso Napoli</h1>
-    <p class="muted">Martedì e giovedì le uscite in settimana, lungo la domenica, sabato facoltativo. Se salti un allenamento non recuperarlo: riparti dal successivo. Tocca un allenamento per i dettagli.</p>`;
+    <p class="muted">${db.state.schedules?.length || Object.keys(db.state.moves || {}).length ? 'Il piano segue le modifiche che hai chiesto al Coach.' : 'Martedì e giovedì le uscite in settimana, lungo la domenica, sabato facoltativo.'} Per cambiare giorni scrivi al <b>Coach</b>. Se salti un allenamento non recuperarlo: riparti dal successivo. Tocca un allenamento per i dettagli.</p>`;
   let lastPhase = '';
   for (const mon of mondays) {
     const wk = weekSummary(matched, mon, db.runs);
@@ -282,8 +285,31 @@ function parseTime(s) {
   return parts.reduce((a, b) => a * 60 + b, 0);
 }
 
+// ---------- COACH (chat) ----------
+const SUGGEST = ['Com\'è la mia settimana?', 'Posso correre lunedì, mercoledì, venerdì e domenica', 'Il lungo lo faccio il sabato', 'Sposta domani a giovedì', 'Salta oggi', 'Torna al piano originale'];
+function viewCoach() {
+  const chat = db.state.chat || [];
+  const msgs = chat.length ? chat : [{ from: 'coach', text: 'Ciao Marco! Scrivimi cosa vuoi cambiare nel piano: i giorni in cui corri, spostare o saltare un allenamento. Qui sotto trovi qualche esempio.' }];
+  return `<section class="coach"><h1>Coach</h1>
+    <div class="msgs" id="msgs">${msgs.map(m => `<div class="msg ${m.from}">${esc(m.text).replace(/\n/g, '<br>')}</div>`).join('')}</div>
+    <div class="chips">${SUGGEST.map(s => `<button class="chip" data-say="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+    <form id="chatForm" class="chatbar"><input id="chatInput" name="q" autocomplete="off" placeholder="Scrivi qui…" aria-label="Messaggio per il coach"><button class="btn primary small" aria-label="Invia">Invia</button></form>
+    ${chat.length ? '<button class="btn small ghost" id="clearChat">Cancella la conversazione</button>' : ''}
+  </section>`;
+}
+function say(text) {
+  text = String(text || '').trim();
+  if (!text) return;
+  const res = answer(text, db, todayKey());
+  const chat = db.state.chat = (db.state.chat || []);
+  chat.push({ from: 'me', text }, { from: 'coach', text: res.reply });
+  db.state.chat = chat.slice(-40);
+  save(db); render();
+  const box = $('#msgs'); if (box) box.lastElementChild?.scrollIntoView({ block: 'end' });
+}
+
 // ---------- RENDER ----------
-const VIEWS = { oggi: viewOggi, forma: viewForma, piano: viewPiano, dati: viewDati };
+const VIEWS = { oggi: viewOggi, forma: viewForma, piano: viewPiano, coach: viewCoach, dati: viewDati };
 function render() {
   $('#main').innerHTML = VIEWS[tab]();
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -293,6 +319,8 @@ function render() {
 document.addEventListener('click', e => {
   const nb = e.target.closest('nav button');
   if (nb) { tab = nb.dataset.tab; try { sessionStorage.setItem('tab', tab); } catch {} render(); window.scrollTo(0, 0); return; }
+  const chip = e.target.closest('[data-say]'); if (chip) { say(chip.dataset.say); return; }
+  if (e.target.id === 'clearChat') { db.state.chat = []; save(db); render(); return; }
   if (e.target.id === 'export') {
     const blob = new Blob([JSON.stringify(db)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `allenamento-corsa-${todayKey()}.json`; a.click();
@@ -319,6 +347,7 @@ document.addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
   if (e.target.id === 'codeForm') { await importCode(String(fd.get('code') || '')); return; }
+  if (e.target.id === 'chatForm') { say(fd.get('q')); return; }
   if (e.target.id === 'testForm') {
     const sec = parseTime(fd.get('time'));
     if (sec && sec > 600 && sec < 3600) { db.profile.tests.push({ date: fd.get('date'), sec }); db.profile.tests.sort((a, b) => a.date.localeCompare(b.date)); }

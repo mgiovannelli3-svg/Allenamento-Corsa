@@ -101,23 +101,26 @@ export const runsOn = (runs, key) => runs.filter(r => localDateKey(r.start) === 
 
 // Abbina le corse fatte agli allenamenti del piano (stesso giorno o, per i facoltativi e i
 // giorni "alternativi", il giorno prima/dopo).
-export function matchPlan(runs, todayKey) {
+export function matchPlan(runs, todayKey, plan = PLAN) {
   const used = new Set();
-  return PLAN.map(w => {
+  const live = plan.filter(o => !o.skipped);
+  return plan.map(w => {
     let run = runsOn(runs, w.date).find(r => !used.has(r.id));
-    if (!run) for (const d of [-1, 1]) { run = runsOn(runs, addDays(w.date, d)).find(r => !used.has(r.id) && !PLAN.some(o => o.date === localDateKey(r.start))); if (run) break; }
+    if (!run) for (const d of [-1, 1]) { run = runsOn(runs, addDays(w.date, d)).find(r => !used.has(r.id) && !live.some(o => o.date === localDateKey(r.start))); if (run) break; }
     if (run) used.add(run.id);
-    const status = run ? 'done' : w.date < addDays(todayKey, -1) ? (w.optional ? 'skipped' : 'missed') : w.date <= todayKey ? 'today' : 'future';
+    const status = run ? 'done' : w.skipped ? 'skipped' : w.date < addDays(todayKey, -1) ? (w.optional ? 'skipped' : 'missed') : w.date <= todayKey ? 'today' : 'future';
     return { ...w, run, status };
   });
 }
 
 // Il cuore dell'app: l'allenamento di oggi, adattato a come stai.
 // state: { heelPain: {date: true}, tired: {date: true} }
-export function today(todayKey, runs, fit, p, profile, state) {
-  const matched = matchPlan(runs, todayKey);
+export function today(todayKey, runs, fit, p, profile, state, plan = PLAN) {
+  const matched = matchPlan(runs, todayKey, plan);
   const notes = [];
-  let w = matched.find(m => m.date === todayKey) || null;
+  let w = matched.find(m => m.date === todayKey && !m.skipped) || null;
+  const skippedToday = matched.find(m => m.date === todayKey && m.skipped && m.status !== 'done');
+  if (skippedToday) notes.push({ level: 'info', text: `Oggi era previsto: ${TYPES[skippedToday.type].name.toLowerCase()}, ${skippedToday.km} km. L'hai tolto tu dalla chat: non va recuperato.` });
   // un allenamento con due date possibili (es. "gio 19 o ven 20") vale anche oggi, se non è già fatto
   if (!w) {
     const y = matched.find(m => m.altDate === todayKey);
@@ -127,7 +130,7 @@ export function today(todayKey, runs, fit, p, profile, state) {
   // la corsa di oggi può aver "coperto" un allenamento di un giorno vicino (es. quello di venerdì fatto giovedì)
   const coveredToday = matched.find(m => m.run && localDateKey(m.run.start) === todayKey);
   if (coveredToday && (!w || w.status !== 'done' || w.run !== coveredToday.run)) w = { ...coveredToday, movedFrom: coveredToday.date !== todayKey ? coveredToday.date : undefined };
-  const out = { planned: w, adjusted: w ? { ...w } : null, notes, doneToday, matched, rest: !w, done: !!coveredToday, next: matched.find(m => m.date > todayKey && m.status !== 'done') || null };
+  const out = { planned: w, adjusted: w ? { ...w } : null, notes, doneToday, matched, rest: !w, done: !!coveredToday, next: matched.find(m => m.date > todayKey && m.status !== 'done' && !m.skipped) || null };
   if (!out.done) {
 
   // 1. Il piede prima di tutto
@@ -165,7 +168,7 @@ export function today(todayKey, runs, fit, p, profile, state) {
 
   // 3. La settimana scorsa: se ne hai fatta meno di metà, non correre avanti
   const lastMon = addDays(mondayOf(todayKey), -7), lastSun = addDays(lastMon, 6);
-  const lastWeek = matched.filter(m => m.date >= lastMon && m.date <= lastSun && !m.optional);
+  const lastWeek = matched.filter(m => m.date >= lastMon && m.date <= lastSun && !m.optional && !m.skipped);
   const plannedKm = lastWeek.reduce((s, m) => s + m.km, 0);
   const doneKm = runsBetween(runs, lastMon, lastSun).reduce((s, r) => s + r.km, 0);
   const lastRunKey = runs.length ? localDateKey(runs[runs.length - 1].start) : null;
@@ -200,8 +203,8 @@ export function today(todayKey, runs, fit, p, profile, state) {
 export function weekSummary(matched, mondayKey, runs) {
   const sun = addDays(mondayKey, 6);
   const items = matched.filter(m => m.date >= mondayKey && m.date <= sun);
-  const planned = items.filter(m => !m.optional).reduce((s, m) => s + m.km, 0);
-  const plannedMax = items.reduce((s, m) => s + m.km, 0);
+  const planned = items.filter(m => !m.optional && !m.skipped).reduce((s, m) => s + m.km, 0);
+  const plannedMax = items.filter(m => !m.skipped).reduce((s, m) => s + m.km, 0);
   const done = runsBetween(runs, mondayKey, sun).reduce((s, r) => s + r.km, 0);
   return { items, planned, plannedMax, done: Math.round(done * 10) / 10, phase: phaseOf(mondayKey) || phaseOf(sun) };
 }
