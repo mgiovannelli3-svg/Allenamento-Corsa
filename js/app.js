@@ -359,7 +359,9 @@ function startMic() {
 // ---------- RENDER ----------
 const VIEWS = { oggi: viewOggi, forma: viewForma, piano: viewPiano, coach: viewCoach, dati: viewDati };
 function render() {
-  $('#main').innerHTML = VIEWS[tab]();
+  if (!VIEWS[tab]) tab = 'oggi';
+  try { $('#main').innerHTML = VIEWS[tab](); }
+  catch (e) { $('#main').innerHTML = `<section><div class="note warn">Qualcosa non ha funzionato in questa schermata. Chiudi del tutto l'app e riaprila: di solito succede subito dopo un aggiornamento.</div></section>`; console.error(e); }
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   if (tab === 'piano') document.querySelector('.week-card.current')?.scrollIntoView({ block: 'start' });
 }
@@ -449,4 +451,9 @@ if (!db.runs.length) fetch('dati-iniziali.json').then(r => r.ok ? r.json() : nul
 let lastDay = todayKey();
 document.addEventListener('visibilitychange', () => { if (!document.hidden && todayKey() !== lastDay) { lastDay = todayKey(); render(); } });
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+  // quando arriva una versione nuova dell'app, ricarico una volta così è tutta aggiornata
+  let reloaded = false; const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded && hadController) { reloaded = true; location.reload(); } });
+}
