@@ -6,6 +6,7 @@ import { fitness, paces, weeklyKm, fmtPace, fmtTime, localDateKey, addDays, mond
 import { TYPES, describe, today, matchPlan, weekSummary, phaseOf } from './plan.js';
 import { activePlan } from './schedule.js';
 import { answer } from './chat.js';
+import { opening } from './coach.js';
 
 let db = load();
 let tab = 'oggi';
@@ -287,45 +288,83 @@ function parseTime(s) {
 }
 
 // ---------- COACH (chat e voce) ----------
-const SUGGEST = ['Com\'è andata: vento contro e un po\' di salita, gambe pesanti', 'Com\'è la mia settimana?', 'Posso correre lunedì, mercoledì, venerdì e domenica', 'Il lungo lo faccio il sabato', 'Sposta domani a giovedì', 'Salta oggi', 'Torna al piano originale'];
+const SUGGEST = ['Come sto di forma?', 'Cosa fai per farmi migliorare?', 'Che tempo farei in una mezza?', 'A che ritmo devo correre?', 'Com\'è andata: vento contro e un po\' di salita, gambe pesanti', 'Com\'è la mia settimana?', 'HRV 48', 'Posso correre lunedì, mercoledì, venerdì e domenica', 'Sposta domani a giovedì', 'Salta oggi'];
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let listening = null;
 function viewCoach() {
   const chat = db.state.chat || [];
   const voice = db.state.voice !== false;
-  const msgs = chat.length ? chat : [{ from: 'coach', text: 'Ciao Marco! Appena finisci di correre tocca il microfono e raccontami com\'è andata: vento, salite, asfalto o sterrato, come ti sentivi. Ti dico com\'è andata e se cambio i prossimi allenamenti. Puoi anche chiedermi di cambiare i giorni del piano.' }];
   return `<section class="coach"><div class="row between"><h1>Coach</h1><button class="btn small ghost" id="voiceToggle" aria-pressed="${voice}">${voice ? 'Voce: sì' : 'Voce: no'}</button></div>
-    <div class="msgs" id="msgs">${msgs.map((m, i) => `<div class="msg ${m.from}">${esc(m.text).replace(/\n/g, '<br>')}${m.from === 'coach' ? `<button class="listen" data-listen="${i}" aria-label="Ascolta">🔊</button>` : ''}</div>`).join('')}</div>
+    ${voice ? '<p class="muted">Non senti la voce? Su iPhone sposta il tasto laterale del silenzioso (non deve vedersi l\'arancione) e alza il volume.</p>' : ''}
+    <div class="msgs" id="msgs">${chat.map((m, i) => `<div class="msg ${m.from}">${esc(m.text).replace(/\n/g, '<br>')}${m.from === 'coach' ? `<button class="listen" data-listen="${i}" aria-label="Ascolta">🔊</button>` : ''}</div>`).join('')}</div>
     <div class="chips">${SUGGEST.map(s => `<button class="chip" data-say="${esc(s)}">${esc(s)}</button>`).join('')}</div>
     <form id="chatForm" class="chatbar"><button type="button" class="mic" id="mic" aria-label="Parla">🎤</button><input id="chatInput" name="q" autocomplete="off" placeholder="Scrivi o tocca il microfono…" aria-label="Messaggio per il coach"><button class="btn primary small" aria-label="Invia">Invia</button></form>
-    <p class="muted" id="micHint"></p>
+    <p class="muted" id="micHint">${db.state.pending ? 'Tocca il microfono per rispondere.' : ''}</p>
     ${chat.length ? '<button class="btn small ghost" id="clearChat">Cancella la conversazione</button>' : ''}
   </section>`;
 }
-function say(text) {
+// Appena si apre il Coach, una volta al giorno, il coach saluta e fa una domanda
+function greet(talk = true) {
+  const t = todayKey();
+  const chat = db.state.chat = db.state.chat || [];
+  if (chat.some(m => m.day === t)) return null;
+  const o = opening(db, t, new Date().getHours());
+  chat.push({ from: 'coach', text: o.text, day: t });
+  db.state.chat = chat.slice(-40);
+  db.state.pending = o.ask;
+  save(db);
+  if (talk && db.state.voice !== false) speak(o.text);
+  return o;
+}
+function say(text, fromMic = false) {
   if (listening) { listening.onend = null; try { listening.stop(); } catch {} listening = null; }
   text = String(text || '').trim();
   if (!text) return;
-  const res = answer(text, db, todayKey());
+  const t = todayKey();
+  const res = answer(text, db, t);
   const chat = db.state.chat = (db.state.chat || []);
-  chat.push({ from: 'me', text }, { from: 'coach', text: res.reply });
+  chat.push({ from: 'me', text, day: t }, { from: 'coach', text: res.reply, day: t });
   db.state.chat = chat.slice(-40);
   save(db); render();
   const box = $('#msgs'); if (box) box.lastElementChild?.scrollIntoView({ block: 'end' });
-  if (db.state.voice !== false) speak(res.reply);
+  // dopo il microfono il telefono ha bisogno di un attimo prima di poter parlare
+  if (db.state.voice !== false) fromMic ? setTimeout(() => speak(res.reply), 500) : speak(res.reply);
 }
-// Lettura ad alta voce con la voce italiana del telefono
+// Lettura ad alta voce con la voce italiana del telefono.
+// Su iPhone la voce parte solo se la prima lettura nasce da un tocco: per questo "sblocco" la voce al primo tocco.
+let speechUnlocked = false;
+function unlockSpeech() {
+  if (speechUnlocked || !('speechSynthesis' in window)) return;
+  speechUnlocked = true;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.lang = 'it-IT'; speechSynthesis.speak(u); } catch {}
+}
+function itVoice() {
+  const vs = speechSynthesis.getVoices().filter(v => v.lang && v.lang.toLowerCase().replace('_', '-').startsWith('it'));
+  return vs.find(v => /alice|federica|elsa|google/i.test(v.name)) || vs.find(v => v.localService) || vs[0] || null;
+}
 function speak(text) {
   try {
     if (!('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text.replace(/•/g, '').replace(/\n+/g, '. '));
-    u.lang = 'it-IT';
-    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith('it'));
-    if (v) u.voice = v;
-    speechSynthesis.speak(u);
+    const s = speechSynthesis;
+    const clean = String(text).replace(/[•🔊🎤]/gu, '').replace(/\n+/g, '. ').replace(/(\d):(\d\d)/g, '$1 e $2').replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+    // frasi brevi: le voci di alcuni telefoni si interrompono con i testi lunghi
+    const parts = clean.match(/[^.!?]+[.!?]*/g) || [clean];
+    const v = itVoice();
+    const go = () => {
+      for (const p of parts) {
+        if (!p.trim()) continue;
+        const u = new SpeechSynthesisUtterance(p.trim());
+        u.lang = 'it-IT'; u.rate = 1;
+        if (v) u.voice = v;
+        s.speak(u);
+      }
+      if (s.paused) s.resume();
+    };
+    if (s.speaking || s.pending) { s.cancel(); setTimeout(go, 250); } else go();
   } catch {}
 }
+if ('speechSynthesis' in window) { try { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => {}; } catch {} }
 // Dettatura: usa il riconoscimento vocale del telefono se c'è, altrimenti il microfono della tastiera
 function startMic() {
   const input = $('#chatInput'), hint = $('#micHint'), mic = $('#mic');
@@ -349,7 +388,7 @@ function startMic() {
       input.value = (finalText + interim).trim();
     };
     rec.onerror = ev => { if (hint) hint.textContent = ev.error === 'not-allowed' ? 'Il telefono non ha dato il permesso al microfono. Usa il microfono della tastiera.' : 'Non ti ho sentito bene. Riprova o usa il microfono della tastiera.'; };
-    rec.onend = () => { listening = null; mic?.classList.remove('on'); if (hint) hint.textContent = ''; if (input.value.trim()) say(input.value); };
+    rec.onend = () => { listening = null; mic?.classList.remove('on'); if (hint) hint.textContent = ''; if (input.value.trim()) say(input.value, true); };
     rec.start();
     listening = rec; mic?.classList.add('on');
     if (hint) hint.textContent = 'Ti ascolto… tocca di nuovo il microfono quando hai finito.';
@@ -366,15 +405,22 @@ function render() {
   if (tab === 'piano') document.querySelector('.week-card.current')?.scrollIntoView({ block: 'start' });
 }
 
+document.addEventListener('click', unlockSpeech, true);
 document.addEventListener('click', e => {
   const nb = e.target.closest('nav button');
-  if (nb) { tab = nb.dataset.tab; try { sessionStorage.setItem('tab', tab); } catch {} render(); window.scrollTo(0, 0); return; }
+  if (nb) {
+    tab = nb.dataset.tab; try { sessionStorage.setItem('tab', tab); } catch {}
+    if (tab === 'coach') greet();
+    render(); window.scrollTo(0, 0);
+    if (tab === 'coach') $('#msgs')?.lastElementChild?.scrollIntoView({ block: 'end' });
+    return;
+  }
   const chip = e.target.closest('[data-say]'); if (chip) { say(chip.dataset.say); return; }
   if (e.target.closest('#mic')) { startMic(); return; }
   const li = e.target.closest('[data-listen]'); if (li) { const m = (db.state.chat || [])[+li.dataset.listen]; speak(m ? m.text : $('.msg.coach')?.textContent || ''); return; }
-  if (e.target.id === 'voiceToggle') { db.state.voice = db.state.voice === false; save(db); render(); return; }
-  if (e.target.id === 'tellRun') { tab = 'coach'; render(); setTimeout(startMic, 50); return; }
-  if (e.target.id === 'clearChat') { db.state.chat = []; save(db); render(); return; }
+  if (e.target.id === 'voiceToggle') { db.state.voice = db.state.voice === false; save(db); render(); if (db.state.voice) speak('Voce attiva. Ti leggo le risposte.'); else window.speechSynthesis?.cancel(); return; }
+  if (e.target.id === 'tellRun') { tab = 'coach'; greet(false); render(); setTimeout(startMic, 50); return; }
+  if (e.target.id === 'clearChat') { db.state.chat = []; delete db.state.pending; save(db); greet(); render(); return; }
   if (e.target.id === 'export') {
     const blob = new Blob([JSON.stringify(db)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `allenamento-corsa-${todayKey()}.json`; a.click();
@@ -441,6 +487,7 @@ if (location.hash.startsWith('#storico=')) {
   importCode(h);
 }
 
+if (tab === 'coach') greet(false);
 render();
 // Se non ci sono dati e accanto all'app c'è un file "dati-iniziali.json" (copia di sicurezza), lo carico.
 if (!db.runs.length) fetch('dati-iniziali.json').then(r => r.ok ? r.json() : null).then(data => {
