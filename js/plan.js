@@ -26,9 +26,9 @@ export const PLAN = [
   // Settimana 0 — Ripartire piano
   W('2026-11-20', 'easy', 7, 'Prendere il ritmo giusto', { altDate: '2026-11-19', alt: 'Va bene anche giovedì 19' }),
   W('2026-11-22', 'easyfin', 10, 'Base aerobica'),
-  // Settimana 1
-  W('2026-11-24', 'strides', 8, 'Riattivare la velocità senza fatica'),
-  W('2026-11-26', 'easy', 7, 'Base aerobica'),
+  // Settimana 1 (spostata da Marco: lunedì e mercoledì invece di martedì e giovedì)
+  W('2026-11-23', 'strides', 8, 'Riattivare la velocità senza fatica'),
+  W('2026-11-25', 'easy', 7, 'Base aerobica'),
   W('2026-11-28', 'veryeasy', 5, 'Volume leggero', { optional: true }),
   W('2026-11-29', 'long', 11, 'Resistenza'),
   // Settimana 2
