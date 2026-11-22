@@ -1,5 +1,5 @@
 // Permette all'app di aprirsi anche senza connessione.
-const CACHE = 'corsa-v7';
+const CACHE = 'corsa-v8';
 const FILES = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'js/app.js', 'js/analysis.js', 'js/plan.js', 'js/store.js', 'js/fit.js', 'js/zip.js', 'js/csv.js', 'js/schedule.js', 'js/chat.js', 'js/feedback.js', 'js/coach.js', 'icons/icon.svg', 'icons/icon-192.png'];
 // "no-cache": chiede sempre al sito se c'è una versione nuova, così dopo un aggiornamento
 // non restano mai pezzi vecchi e pezzi nuovi mescolati.
