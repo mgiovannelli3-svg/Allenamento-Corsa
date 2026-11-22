@@ -25,7 +25,7 @@ const W = (date, type, km, why, extra = {}) => ({ date, type, km, why, ...extra 
 export const PLAN = [
   // Settimana 0 — Ripartire piano
   W('2026-11-20', 'easy', 7, 'Prendere il ritmo giusto', { altDate: '2026-11-19', alt: 'Va bene anche giovedì 19' }),
-  W('2026-11-22', 'easyfin', 10, 'Base aerobica'),
+  W('2026-11-21', 'easyfin', 10, 'Base aerobica'), // fatta sabato 21 invece di domenica 22
   // Settimana 1 (spostata da Marco: lunedì e mercoledì invece di martedì e giovedì)
   W('2026-11-23', 'strides', 8, 'Riattivare la velocità senza fatica'),
   W('2026-11-25', 'easy', 7, 'Base aerobica'),
